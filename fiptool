@@ -1,0 +1,178 @@
+#!/usr/bin/env python
+
+import os
+import lzma
+import argparse
+import binascii
+
+def crc32(data):
+    crc = binascii.crc_hqx(data, 0)
+    crc = crc.to_bytes(2, 'little') + b'\xFE\xCA'
+    return crc
+
+def p32(x):
+    return x.to_bytes(4, 'little')
+
+def p64(x):
+    return x.to_bytes(8, 'little')
+
+def pad(data):
+    return data + b'\0' * (-len(data) % 512)
+
+def lzma_compress(data):
+    z = lzma.LZMACompressor(lzma.FORMAT_ALONE, preset=lzma.PRESET_EXTREME)
+    compressed = z.compress(data)
+    compressed += z.flush()
+    return compressed
+
+def pack_param1(args):
+    print('Packing Param1...')
+    with open(args.fsbl, 'rb') as f:
+        fsbl = pad(f.read())
+    
+    print(f'Param1:    0x0')
+    print(f'FSBL:      0x1000')
+    element = [
+        ('NAND_INFO', b'\0' * 128),
+        ('NOR_INFO', b'\xff' * 36),
+        ('FIP_FLAG', p64(0)),
+        ('CHIP_CONF_SIZE', p32(760)),
+        ('BLCP_IMG_CKSUM', crc32(b'')),
+        ('BLCP_IMG_SIZE', p32(0)),
+        ('BLCP_IMG_RUNADDR', p32(0x5200200)),
+        ('BLCP_PARAM_LOADADDR', p32(0)),
+        ('BLCP_PARAM_SIZE', p32(0)),
+        ('BL2_IMG_CKSUM', crc32(fsbl)),
+        ('BL2_IMG_SIZE', p32(len(fsbl))),
+        ('BLD_IMG_SIZE', p32(0)),
+        ('PARAM2_LOADADDR', p32(0x1000 + len(fsbl))),
+        ('REVERSED1', b'\0' * 4),
+        ('CHIP_CONF', b''.join(p32(x) for x in [
+            0x0E00000C, 0xA0000001,
+            0x0E00000C, 0xA0000002,
+            0xFFFFFFA0, 0xFFFFFFFF
+        ]).ljust(760, b'\0')),
+        ('BL_EK', b'\0' * 32),
+        ('ROOT_PK', b'\0' * 512),
+        ('BL_PK', b'\0' * 512),
+    ]
+    data = b''.join([v for k, v in element])
+    element = [
+        ('MAGIC1', b'CVBL01\n\0'),
+        ('MAGIC2', p32(0)),
+        ('PARAM_CKSUM', crc32(data)),
+        ('DATA', data),
+        ('BL_PK_SIG', b'\0' * 512),
+        ('CHIP_CONF_SIG', b'\0' * 512),
+        ('BL2_IMG_SIG', b'\0' * 512),
+        ('BLCP_IMG_SIG', b'\0' * 512),
+        ('BL2', fsbl),
+    ]
+    return b''.join([v for k, v in element])
+
+def pack_param2(args):
+    print('Packing Param2...')
+    with open(args.fsbl, 'rb') as f:
+        fsbl = pad(f.read())
+    with open(args.ddr_param, 'rb') as f:
+        ddr_param = pad(f.read())
+    with open(args.rtos, 'rb') as f:
+        rtos = pad(f.read())
+    with open(args.opensbi, 'rb') as f:
+        opensbi = pad(f.read())
+    addr_ddr_param = 0x1000 + len(fsbl) + 0x1000
+    addr_rtos = addr_ddr_param + len(ddr_param)
+    addr_opensbi = addr_rtos + len(rtos)
+    addr_uboot = addr_opensbi + len(opensbi)
+
+    print(f'Param2:    0x{0x1000 + len(fsbl):x}')
+    print(f'DDR Param: 0x{addr_ddr_param:x}')
+    print(f'RTOS:      0x{addr_rtos:x}')
+    print(f'OpenSBI:   0x{addr_opensbi:x}')
+    print(f'U-Boot:    0x{addr_uboot:x}')
+
+    element = [
+        ('RESERVED1', p32(0)),
+        ('DDR_PARAM_CKSUM', crc32(ddr_param)),
+        ('DDR_PARAM_LOADADDR', p32(addr_ddr_param)),
+        ('DDR_PARAM_SIZE', p32(len(ddr_param))),
+        ('DDR_PARAM_RESERVED', p32(0)),
+        ('BLCP_2ND_CKSUM', crc32(rtos)),
+        ('BLCP_2ND_LOADADDR', p32(addr_rtos)),
+        ('BLCP_2ND_SIZE', p32(len(rtos))),
+        ('BLCP_2ND_RUNADDR', p32(0x83F40000)),
+        ('MONITOR_CKSUM', crc32(opensbi)),
+        ('MONITOR_LOADADDR', p32(addr_opensbi)),
+        ('MONITOR_SIZE', p32(len(opensbi))),
+        ('MONITOR_RUNADDR', p32(0x80000000)),
+        ('LOADER_2ND_RESERVED0', p32(0)),
+        ('LOADER_2ND_LOADADDR', p32(addr_uboot)),
+        ('LOADER_2ND_RESERVED1', p32(0)),
+        ('LOADER_2ND_RESERVED2', p32(0)),
+        ('RESERVED_LAST', b'\0' * 4016),
+    ]
+    data = b''.join([v for k, v in element])
+
+    element = [
+        ('MAGIC1', b'CVLD02\n\0'),
+        ('PARAM2_CKSUM', crc32(data)),
+        ('DATA', data),
+        ('DDR_PARAM', ddr_param),
+        ('BLCP_2ND', rtos),
+        ('MONITOR', opensbi),
+        ('LOADER_2ND', pack_uboot(args)),
+    ]
+    return b''.join([v for k, v in element])
+
+def pack_uboot(args):
+    with open(args.uboot, 'rb') as f:
+        uboot = lzma_compress(f.read())
+        uboot += b'\0' * ((-len(uboot) - 0x20) % 512)
+
+    element = [
+        ('SIZE', p32(len(uboot) + 0x20)),
+        ('RUNADDR', p64(args.text_base - 0x20)),
+        ('RESERVED1', p32(0)),
+        ('RESERVED2', p32(0)),
+        ('DATA', uboot),
+    ]
+    data = b''.join([v for k, v in element])
+    element = [
+        ('JUMP0', p32(0)),
+        ('MAGIC', b'B3MA'),
+        ('CKSUM', crc32(data)),
+        ('DATA', data),
+    ]
+    return b''.join([v for k, v in element])
+
+
+def generate_fip(args):
+    with open(args.output, 'wb') as f:
+        f.write(pack_param1(args))
+        f.write(pack_param2(args))
+    print('Success')
+
+def parse_args():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    parser = argparse.ArgumentParser(description='FIP tools')
+
+    parser.add_argument('--fsbl', type=str, help='Add FSBL into FIP')
+    parser.add_argument('--ddr_param', type=str, default=os.path.join(base_dir, 'ddr_param.bin'), nargs='?', help='Add DDR parameter into FIP')
+    parser.add_argument('--opensbi', type=str, help='Add OpenSBI into FIP')
+    parser.add_argument('--uboot', type=str, help='Add U-Boot into FIP')
+    parser.add_argument('--rtos', type=str, default=os.path.join(base_dir, 'cvirtos.bin'), nargs='?', help='Add RTOS into FIP')
+    parser.add_argument('--text-base', type=int, default=0x80200000, nargs='?', help='Base address for u-boot')
+    parser.add_argument('output', type=str, default='fip.bin', nargs='?', help='Output filename')
+
+    args = parser.parse_args()
+
+    return args
+
+
+def main():
+    args = parse_args()
+    generate_fip(args)
+
+if __name__ == '__main__':
+    main()
