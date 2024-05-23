@@ -34,11 +34,18 @@ Choose any RTOS, and after compilation, a bin file will be generated.
 For Milk-V Duo with CV1800B SoC, use cv180x.bin under fsbl folder as its firt stage bootloader, and for Milk-V Duo256M with SG2002 SoC, use cv181x.bin instead.
 
 ```shell
-python genfip.py \
-    --fsbl fsbl/cv180x.bin \
+./fiptool \
+    --fsbl data/fsbl/cv180x.bin \
     --opensbi <Your OpenSBI Path>/fw_dynamic.bin \
     --uboot <Your U-Boot Path>/u-boot.bin \
     --rtos <Any RTOS.bin>
+```
+or
+
+Build fip.bin using Makefile, select according to board's memory size.
+```shell
+make BOARD=64M (or 256M)
+
 ```
 
 ## Usage
