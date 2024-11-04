@@ -163,7 +163,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='FIP tools')
 
     parser.add_argument('--fsbl', type=str, help='Add FSBL into FIP')
-    parser.add_argument('--ddr_param', type=str, default=os.path.join(base_dir, 'ddr_param.bin'), nargs='?', help='Add DDR parameter into FIP')
+    parser.add_argument('--ddr_param', type=str, default=os.path.join(base_dir, 'data/ddr_param.bin'), nargs='?', help='Add DDR parameter into FIP')
     parser.add_argument('--opensbi', type=str, help='Add OpenSBI into FIP')
     parser.add_argument('--uboot', type=str, help='Add U-Boot into FIP')
     parser.add_argument('--rtos', type=str, default=os.path.join(base_dir, 'cvirtos.bin'), nargs='?', help='Add RTOS into FIP')
