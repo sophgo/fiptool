@@ -36,6 +36,7 @@ For Milk-V Duo with CV1800B SoC, use cv180x.bin under fsbl folder as its firt st
 ```shell
 ./fiptool \
     --fsbl data/fsbl/cv180x.bin \
+    --ddr_param data/ddr_param.bin \
     --opensbi <Your OpenSBI Path>/fw_dynamic.bin \
     --uboot <Your U-Boot Path>/u-boot.bin \
     --rtos <Any RTOS.bin>
